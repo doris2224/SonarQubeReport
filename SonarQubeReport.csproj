@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SonarQubeReport</AssemblyName>
+    <RootNamespace>SonarQubeReport</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 讓 Console 正確輸出中文（避免亂碼） -->
+    <OutputEncoding>UTF-8</OutputEncoding>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 用來產出 .xlsx 檔案，純 .NET 實作，不需安裝 Excel -->
+    <PackageReference Include="ClosedXML" Version="0.104.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

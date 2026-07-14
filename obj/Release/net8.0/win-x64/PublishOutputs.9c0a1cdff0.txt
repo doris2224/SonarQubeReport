@@ -1,0 +1,3 @@
+C:\aTestCode\SonarQubeReport\bin\Release\publish\SonarQubeReport.pdb
+C:\aTestCode\SonarQubeReport\bin\Release\publish\appsettings.json
+C:\aTestCode\SonarQubeReport\bin\Release\publish\SonarQubeReport.exe

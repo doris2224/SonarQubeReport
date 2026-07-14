@@ -1,0 +1,223 @@
+using System.Text.Json;
+using ClosedXML.Excel;
+using SonarQubeReport.Models;
+
+namespace SonarQubeReport.Services;
+
+/// <summary>
+/// 依照 SonarQubeReportExample.xlsx 的頁籤配置，把抓回來的資料寫成 .xlsx：
+/// All (完整原始欄位) / Issues (未結案) / Unconfirmed (已結案/已解決) / Security Hotspots。
+/// </summary>
+public static class ExcelReportBuilder
+{
+    // 對應範例檔「All」頁籤欄位順序（共 29 欄）
+    private static readonly string[] AllHeaders =
+    {
+        "updateDate", "line", "rule", "project", "effort", "type", "cleanCodeAttribute", "issueStatus",
+        "flows", "scope", "externalRuleEngine", "key", "severity", "comments", "author",
+        "cleanCodeAttributeCategory", "messageFormattings", "impacts", "message", "creationDate",
+        "quickFixAvailable", "tags", "codeVariants", "component", "prioritizedRule", "textRange",
+        "debt", "hash", "status"
+    };
+
+    // 對應範例檔「Issues」/「Unconfirmed」頁籤欄位順序
+    private static readonly string[] IssueHeaders =
+        { "Rule", "Message", "Type", "Severity", "Language", "File", "Line", "Effort", "Status", "Comments" };
+
+    // 對應範例檔「Security Hotspots」頁籤欄位順序
+    private static readonly string[] HotspotHeaders =
+        { "Rule", "Message", "Category", "Priority", "Severity", "Language", "File", "Line", "Status", "Resolution", "Comments" };
+
+    public static void Build(
+        string outputPath,
+        List<SonarIssue> allIssues,
+        Dictionary<string, string> componentLanguages,
+        List<string> unconfirmedStatuses,
+        List<HotspotRow> hotspots)
+    {
+        using var workbook = new XLWorkbook();
+
+        var issuesRows = allIssues
+            .Where(i => !unconfirmedStatuses.Contains(i.Status ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        var unconfirmedRows = allIssues
+            .Where(i => unconfirmedStatuses.Contains(i.Status ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        // 頁籤順序依照需求：All、Issues、Unconfirmed、Security Hotspots
+        BuildAllSheet(workbook.Worksheets.Add("All"), allIssues);
+        BuildIssueSheet(workbook.Worksheets.Add("Issues"), issuesRows, componentLanguages);
+        BuildIssueSheet(workbook.Worksheets.Add("Unconfirmed"), unconfirmedRows, componentLanguages);
+        BuildHotspotSheet(workbook.Worksheets.Add("Security Hotspots"), hotspots);
+
+        var dir = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        workbook.SaveAs(outputPath);
+    }
+
+    private static void BuildAllSheet(IXLWorksheet ws, List<SonarIssue> issues)
+    {
+        WriteHeader(ws, AllHeaders);
+
+        int row = 2;
+        foreach (var i in issues)
+        {
+            int col = 1;
+            SetCell(ws, row, col++, i.UpdateDate ?? "");
+            SetCell(ws, row, col++, i.Line?.ToString() ?? "");
+            SetCell(ws, row, col++, i.Rule ?? "");
+            SetCell(ws, row, col++, i.Project ?? "");
+            SetCell(ws, row, col++, i.Effort ?? "");
+            SetCell(ws, row, col++, i.Type ?? "");
+            SetCell(ws, row, col++, i.CleanCodeAttribute ?? "");
+            SetCell(ws, row, col++, i.IssueStatus ?? "");
+            SetCell(ws, row, col++, ToJson(i.Flows));
+            SetCell(ws, row, col++, i.Scope ?? "");
+            SetCell(ws, row, col++, i.ExternalRuleEngine ?? "");
+            SetCell(ws, row, col++, i.Key ?? "");
+            SetCell(ws, row, col++, i.Severity ?? "");
+            SetCell(ws, row, col++, ToJson(i.Comments));
+            SetCell(ws, row, col++, i.Author ?? "");
+            SetCell(ws, row, col++, i.CleanCodeAttributeCategory ?? "");
+            SetCell(ws, row, col++, ToJson(i.MessageFormattings));
+            SetCell(ws, row, col++, ToJson(i.Impacts));
+            SetCell(ws, row, col++, i.Message ?? "");
+            SetCell(ws, row, col++, i.CreationDate ?? "");
+            SetCell(ws, row, col++, i.QuickFixAvailable?.ToString() ?? "");
+            SetCell(ws, row, col++, ToJson(i.Tags));
+            SetCell(ws, row, col++, ToJson(i.CodeVariants));
+            SetCell(ws, row, col++, i.Component ?? "");
+            SetCell(ws, row, col++, i.PrioritizedRule?.ToString() ?? "");
+            SetCell(ws, row, col++, ToJson(i.TextRange));
+            SetCell(ws, row, col++, i.Debt ?? "");
+            SetCell(ws, row, col++, i.Hash ?? "");
+            SetCell(ws, row, col++, i.Status ?? "");
+            row++;
+        }
+
+        FinalizeSheet(ws, AllHeaders.Length);
+    }
+
+    private static void BuildIssueSheet(IXLWorksheet ws, List<SonarIssue> issues, Dictionary<string, string> componentLanguages)
+    {
+        WriteHeader(ws, IssueHeaders);
+
+        int row = 2;
+        foreach (var i in issues)
+        {
+            var language = i.Component != null && componentLanguages.TryGetValue(i.Component, out var lang)
+                ? lang
+                : "";
+
+            int col = 1;
+            SetCell(ws, row, col++, i.Rule ?? "");
+            SetCell(ws, row, col++, i.Message ?? "");
+            SetCell(ws, row, col++, i.Type ?? "");
+            SetCell(ws, row, col++, i.Severity ?? "");
+            SetCell(ws, row, col++, language);
+            SetCell(ws, row, col++, i.Component ?? "");
+            SetCell(ws, row, col++, i.Line?.ToString() ?? "");
+            SetCell(ws, row, col++, i.Effort ?? "");
+            SetCell(ws, row, col++, i.Status ?? "");
+            SetCell(ws, row, col++, JoinComments(i.Comments));
+            row++;
+        }
+
+        FinalizeSheet(ws, IssueHeaders.Length);
+    }
+
+    private static void BuildHotspotSheet(IXLWorksheet ws, List<HotspotRow> hotspots)
+    {
+        WriteHeader(ws, HotspotHeaders);
+
+        int row = 2;
+        foreach (var hr in hotspots)
+        {
+            var h = hr.Hotspot;
+            int col = 1;
+            SetCell(ws, row, col++, h.RuleKey ?? "");
+            SetCell(ws, row, col++, h.Message ?? "");
+            SetCell(ws, row, col++, h.SecurityCategory ?? "");
+            SetCell(ws, row, col++, h.VulnerabilityProbability ?? "");
+            SetCell(ws, row, col++, hr.Rule?.Severity ?? "");
+            SetCell(ws, row, col++, hr.Rule?.LangName ?? hr.Rule?.Lang ?? "");
+            SetCell(ws, row, col++, h.Component ?? "");
+            SetCell(ws, row, col++, h.Line?.ToString() ?? "");
+            SetCell(ws, row, col++, h.Status ?? "");
+            SetCell(ws, row, col++, h.Resolution ?? "");
+            // SonarQube 的 hotspots/search 不會回傳留言串，留空欄位以維持與範例檔相同的欄位配置
+            SetCell(ws, row, col++, "");
+            row++;
+        }
+
+        FinalizeSheet(ws, HotspotHeaders.Length);
+    }
+
+    private static void WriteHeader(IXLWorksheet ws, string[] headers)
+    {
+        for (int c = 0; c < headers.Length; c++)
+            ws.Cell(1, c + 1).Value = headers[c];
+
+        var headerRow = ws.Row(1);
+        headerRow.Style.Font.Bold = true;
+        headerRow.Style.Fill.BackgroundColor = XLColor.FromArgb(0xD9, 0xE1, 0xF2);
+        ws.SheetView.FreezeRows(1);
+    }
+
+    private static void FinalizeSheet(IXLWorksheet ws, int columnCount)
+    {
+        ws.Style.Font.FontName = "Arial";
+
+        var usedRange = ws.RangeUsed();
+        if (usedRange != null)
+        {
+            usedRange.SetAutoFilter();
+            ws.Columns(1, columnCount).AdjustToContents();
+        }
+    }
+
+    // Excel 單一儲存格最多只能容納 32,767 個字元，超過就會在寫入時丟例外。
+    private const int ExcelMaxCellLength = 32767;
+    private const string TruncationSuffix = " …[內容過長，已截斷；完整內容請至 SonarQube 網頁查看]";
+
+    private static string Clamp(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value ?? string.Empty;
+
+        if (value.Length <= ExcelMaxCellLength)
+            return value;
+
+        int keep = Math.Max(0, ExcelMaxCellLength - TruncationSuffix.Length);
+        return value.Substring(0, keep) + TruncationSuffix;
+    }
+
+    private static void SetCell(IXLWorksheet ws, int row, int col, string? value)
+        => ws.Cell(row, col).Value = Clamp(value);
+
+    private static string ToJson(JsonElement? el)
+    {
+        if (el is null || el.Value.ValueKind == JsonValueKind.Undefined)
+            return "";
+        return el.Value.GetRawText();
+    }
+
+    private static string JoinComments(JsonElement? comments)
+    {
+        if (comments is null || comments.Value.ValueKind != JsonValueKind.Array)
+            return "";
+
+        var parts = new List<string>();
+        foreach (var c in comments.Value.EnumerateArray())
+        {
+            if (c.TryGetProperty("markdown", out var md) && md.ValueKind == JsonValueKind.String)
+                parts.Add(md.GetString() ?? "");
+            else if (c.TryGetProperty("htmlText", out var ht) && ht.ValueKind == JsonValueKind.String)
+                parts.Add(ht.GetString() ?? "");
+        }
+
+        return string.Join(" | ", parts);
+    }
+}
