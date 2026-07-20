@@ -1,3 +1,0 @@
-C:\aTestCode\SonarQubeReport\bin\Release\net8.0\publish\SonarQubeReport.pdb
-C:\aTestCode\SonarQubeReport\bin\Release\net8.0\publish\appsettings.json
-C:\aTestCode\SonarQubeReport\bin\Release\net8.0\publish\SonarQubeReport.exe
