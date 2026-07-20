@@ -11,6 +11,7 @@ public class IssuesSearchResponse
     [JsonPropertyName("ps")] public int Ps { get; set; }
     [JsonPropertyName("issues")] public List<SonarIssue> Issues { get; set; } = new();
     [JsonPropertyName("components")] public List<SonarComponent> Components { get; set; } = new();
+    [JsonPropertyName("rules")] public List<SonarRule> Rules { get; set; } = new();
 }
 
 /// <summary>issues/search 回應中的 "components" 陣列，用來取得每個檔案(component)的語言。</summary>
@@ -21,6 +22,18 @@ public class SonarComponent
     [JsonPropertyName("path")] public string? Path { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
     [JsonPropertyName("qualifier")] public string? Qualifier { get; set; }
+}
+
+/// <summary>
+/// issues/search 回應中的 "rules" 陣列（因為請求帶了 additionalFields=_all 才會回傳）。
+/// sonar-cnes-report 就是用這裡的 langName、以 issue.rule 對應 rules[].key 取得語言，
+/// 而不是用 component 的語言 —— 這才是 Issues/Unconfirmed 頁籤 Language 欄位正確的資料來源。
+/// </summary>
+public class SonarRule
+{
+    [JsonPropertyName("key")] public string? Key { get; set; }
+    [JsonPropertyName("lang")] public string? Lang { get; set; }
+    [JsonPropertyName("langName")] public string? LangName { get; set; }
 }
 
 /// <summary>
@@ -59,4 +72,11 @@ public class SonarIssue
     [JsonPropertyName("externalRuleEngine")] public string? ExternalRuleEngine { get; set; }
     [JsonPropertyName("quickFixAvailable")] public bool? QuickFixAvailable { get; set; }
     [JsonPropertyName("prioritizedRule")] public bool? PrioritizedRule { get; set; }
+
+    // 以下 3 欄是 SonarQube v26.7 之後 /api/issues/search 新增的欄位。
+    // sonar-cnes-report 是把整包原始 JSON 攤平寫出，新欄位會自動出現；
+    // 本工具用固定 model，所以升級 SonarQube 後要手動補欄位，才能保持兩邊「All」頁籤一致。
+    [JsonPropertyName("internalTags")] public JsonElement? InternalTags { get; set; }
+    [JsonPropertyName("fromSonarQubeUpdate")] public bool? FromSonarQubeUpdate { get; set; }
+    [JsonPropertyName("linkedTicketStatus")] public string? LinkedTicketStatus { get; set; }
 }

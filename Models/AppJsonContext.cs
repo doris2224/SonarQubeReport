@@ -14,6 +14,7 @@ namespace SonarQubeReport.Models;
 [JsonSerializable(typeof(IssuesSearchResponse))]
 [JsonSerializable(typeof(HotspotsSearchResponse))]
 [JsonSerializable(typeof(RuleShowResponse))]
+[JsonSerializable(typeof(HotspotShowResponse))]
 internal partial class AppJsonContext : JsonSerializerContext
 {
 }

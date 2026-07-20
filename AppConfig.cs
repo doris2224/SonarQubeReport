@@ -11,7 +11,6 @@ public class AppConfig
 {
     public string BaseUrl { get; set; } = "http://localhost:9000";
     public int PageSize { get; set; } = 500;
-    public List<string> UnconfirmedStatuses { get; set; } = new() { "CLOSED", "RESOLVED" };
     public string HotspotStatus { get; set; } = "TO_REVIEW";
 
     public static AppConfig Load(string path)
@@ -41,18 +40,6 @@ public class AppConfig
 
         if (root.TryGetProperty("HotspotStatus", out var hotspotStatus) && hotspotStatus.ValueKind == JsonValueKind.String)
             cfg.HotspotStatus = hotspotStatus.GetString() ?? cfg.HotspotStatus;
-
-        if (root.TryGetProperty("UnconfirmedStatuses", out var statuses) && statuses.ValueKind == JsonValueKind.Array)
-        {
-            var list = statuses.EnumerateArray()
-                .Where(e => e.ValueKind == JsonValueKind.String)
-                .Select(e => e.GetString() ?? string.Empty)
-                .Where(s => s.Length > 0)
-                .ToList();
-
-            if (list.Count > 0)
-                cfg.UnconfirmedStatuses = list;
-        }
 
         return cfg;
     }

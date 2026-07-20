@@ -49,40 +49,50 @@ public class SonarQubeClient : IDisposable
     private static DateTimeOffset LatestPossibleDate => DateTimeOffset.UtcNow.AddDays(2);
 
     /// <summary>
-    /// 抓取指定專案(可多個)的「全部」issue，不做狀態篩選（也就是範例檔「All」頁籤的資料來源）。
-    /// 回傳值同時附上 componentKey -&gt; language 對照表，供 Issues / Unconfirmed 頁籤填入 Language 欄位。
+    /// 抓取指定專案(可多個)、指定 resolved 狀態的 issue。
+    ///
+    /// 對應 sonar-cnes-report (AbstractIssuesProvider) 的作法：
+    /// Issues 頁籤／All 頁籤都是 resolved=false 的查詢結果；Unconfirmed 頁籤是 resolved=true
+    /// 的查詢結果——這是在 SonarQube 伺服器端用 /api/issues/search 的 resolved 參數篩選，
+    /// 不是抓一次全部再用本地端的 status 欄位去分類，兩者在有大量歷史已解決 issue 時
+    /// 結果會不一致（本地端用 status 分類抓到的是「目前狀態」，伺服器端的 resolved
+    /// 篩的是「是否已被標記解決」，兩個欄位語意不同）。
+    ///
+    /// 回傳值同時附上 rule -&gt; 語言顯示名稱 (langName) 對照表，來源是回應中的 "rules" 陣列
+    /// （因為請求帶了 additionalFields=_all）。sonar-cnes-report 就是拿這個表、用
+    /// issue.rule 去對應 rules[].key 取得語言，用來填 Issues/Unconfirmed 頁籤的 Language 欄位。
     ///
     /// 因為 SonarQube 的 /api/issues/search 規定「p * ps」最多只能到 10000（10000 之後一律回 400），
-    /// 當單一專案的 issue 總數超過一萬筆時，改成依「issue 類型 -&gt; 嚴重度 -&gt; 建立日期區間」遞迴切分，
+    /// 當單一次查詢的 issue 總數超過一萬筆時，改成依「issue 類型 -&gt; 嚴重度 -&gt; 建立日期區間」遞迴切分，
     /// 每一段切分後的查詢結果數都會落在 10000 以內，最後再把所有切分查詢的結果合併起來。
     /// </summary>
-    public async Task<(List<SonarIssue> Issues, Dictionary<string, string> ComponentLanguages)> SearchAllIssuesAsync(
-        IEnumerable<string> projectKeys)
+    public async Task<(List<SonarIssue> Issues, Dictionary<string, string> RuleLanguages)> SearchIssuesAsync(
+        IEnumerable<string> projectKeys, bool resolved)
     {
         var componentKeys = string.Join(",", projectKeys);
-        var componentLanguages = new Dictionary<string, string>();
+        var ruleLanguages = new Dictionary<string, string>();
 
         var issues = await FetchIssuesWithSplitAsync(
-            componentKeys, type: null, severity: null,
+            componentKeys, resolved, type: null, severity: null,
             createdAfter: null, createdBefore: null,
-            componentLanguages);
+            ruleLanguages);
 
-        return (issues, componentLanguages);
+        return (issues, ruleLanguages);
     }
 
     private async Task<List<SonarIssue>> FetchIssuesWithSplitAsync(
-        string componentKeys, string? type, string? severity,
+        string componentKeys, bool resolved, string? type, string? severity,
         DateTimeOffset? createdAfter, DateTimeOffset? createdBefore,
-        Dictionary<string, string> componentLanguages)
+        Dictionary<string, string> ruleLanguages)
     {
-        int total = await GetIssuesTotalAsync(componentKeys, type, severity, createdAfter, createdBefore);
+        int total = await GetIssuesTotalAsync(componentKeys, resolved, type, severity, createdAfter, createdBefore);
         if (total == 0)
             return new List<SonarIssue>();
 
         if (total <= MaxSearchWindow)
         {
             return await FetchIssuesPagesAsync(
-                componentKeys, type, severity, createdAfter, createdBefore, total, componentLanguages);
+                componentKeys, resolved, type, severity, createdAfter, createdBefore, total, ruleLanguages);
         }
 
         // 超過一萬筆，需要再切分。優先順序：type -> severity -> 建立日期區間（二分）
@@ -90,7 +100,7 @@ public class SonarQubeClient : IDisposable
         {
             var result = new List<SonarIssue>();
             foreach (var t in IssueTypesForSplit)
-                result.AddRange(await FetchIssuesWithSplitAsync(componentKeys, t, severity, createdAfter, createdBefore, componentLanguages));
+                result.AddRange(await FetchIssuesWithSplitAsync(componentKeys, resolved, t, severity, createdAfter, createdBefore, ruleLanguages));
             return result;
         }
 
@@ -98,7 +108,7 @@ public class SonarQubeClient : IDisposable
         {
             var result = new List<SonarIssue>();
             foreach (var s in SeveritiesForSplit)
-                result.AddRange(await FetchIssuesWithSplitAsync(componentKeys, type, s, createdAfter, createdBefore, componentLanguages));
+                result.AddRange(await FetchIssuesWithSplitAsync(componentKeys, resolved, type, s, createdAfter, createdBefore, ruleLanguages));
             return result;
         }
 
@@ -110,41 +120,41 @@ public class SonarQubeClient : IDisposable
         {
             // 已經切到秒級還是超過一萬筆（極端狀況），只能盡力而為，先抓前 10000 筆並提出警告。
             Console.Error.WriteLine(
-                $"警告：{componentKeys} 在 type={type}, severity={severity} 且時間區間已無法再切分的情況下，" +
+                $"警告：{componentKeys} 在 resolved={resolved}, type={type}, severity={severity} 且時間區間已無法再切分的情況下，" +
                 $"仍有 {total} 筆 issue，僅能取得前 {MaxSearchWindow} 筆，可能有資料遺漏。");
             return await FetchIssuesPagesAsync(
-                componentKeys, type, severity, start, end, MaxSearchWindow, componentLanguages);
+                componentKeys, resolved, type, severity, start, end, MaxSearchWindow, ruleLanguages);
         }
 
         var mid = start + TimeSpan.FromTicks((end - start).Ticks / 2);
 
-        var left = await FetchIssuesWithSplitAsync(componentKeys, type, severity, start, mid, componentLanguages);
-        var right = await FetchIssuesWithSplitAsync(componentKeys, type, severity, mid, end, componentLanguages);
+        var left = await FetchIssuesWithSplitAsync(componentKeys, resolved, type, severity, start, mid, ruleLanguages);
+        var right = await FetchIssuesWithSplitAsync(componentKeys, resolved, type, severity, mid, end, ruleLanguages);
         left.AddRange(right);
         return left;
     }
 
     private async Task<int> GetIssuesTotalAsync(
-        string componentKeys, string? type, string? severity,
+        string componentKeys, bool resolved, string? type, string? severity,
         DateTimeOffset? createdAfter, DateTimeOffset? createdBefore)
     {
-        var url = BuildIssuesSearchUrl(componentKeys, type, severity, createdAfter, createdBefore, page: 1, pageSize: 1);
+        var url = BuildIssuesSearchUrl(componentKeys, resolved, type, severity, createdAfter, createdBefore, page: 1, pageSize: 1);
         var body = await GetStringAsync(url);
         var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.IssuesSearchResponse);
         return result?.Total ?? 0;
     }
 
     private async Task<List<SonarIssue>> FetchIssuesPagesAsync(
-        string componentKeys, string? type, string? severity,
+        string componentKeys, bool resolved, string? type, string? severity,
         DateTimeOffset? createdAfter, DateTimeOffset? createdBefore,
-        int total, Dictionary<string, string> componentLanguages)
+        int total, Dictionary<string, string> ruleLanguages)
     {
         var issues = new List<SonarIssue>();
         int page = 1;
 
         while (true)
         {
-            var url = BuildIssuesSearchUrl(componentKeys, type, severity, createdAfter, createdBefore, page, _pageSize);
+            var url = BuildIssuesSearchUrl(componentKeys, resolved, type, severity, createdAfter, createdBefore, page, _pageSize);
             var body = await GetStringAsync(url);
 
             var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.IssuesSearchResponse)
@@ -152,10 +162,11 @@ public class SonarQubeClient : IDisposable
 
             issues.AddRange(result.Issues);
 
-            foreach (var c in result.Components)
+            // 用 rules[] 建立 rule -> 語言顯示名稱 對照表（跟 sonar-cnes-report 的 setIssuesLanguage 邏輯相同）。
+            foreach (var r in result.Rules)
             {
-                if (!string.IsNullOrEmpty(c.Key) && !string.IsNullOrEmpty(c.Language))
-                    componentLanguages[c.Key] = c.Language!;
+                if (!string.IsNullOrEmpty(r.Key) && !string.IsNullOrEmpty(r.LangName))
+                    ruleLanguages[r.Key] = r.LangName!;
             }
 
             if (result.Issues.Count == 0 || result.Issues.Count < _pageSize || page * _pageSize >= total)
@@ -168,11 +179,12 @@ public class SonarQubeClient : IDisposable
     }
 
     private static string BuildIssuesSearchUrl(
-        string componentKeys, string? type, string? severity,
+        string componentKeys, bool resolved, string? type, string? severity,
         DateTimeOffset? createdAfter, DateTimeOffset? createdBefore,
         int page, int pageSize)
     {
-        var url = $"api/issues/search?componentKeys={Uri.EscapeDataString(componentKeys)}&ps={pageSize}&p={page}&additionalFields=_all";
+        var url = $"api/issues/search?componentKeys={Uri.EscapeDataString(componentKeys)}" +
+                   $"&resolved={(resolved ? "True" : "False")}&ps={pageSize}&p={page}&additionalFields=_all";
 
         if (!string.IsNullOrEmpty(type))
             url += $"&types={Uri.EscapeDataString(type)}";
@@ -254,6 +266,38 @@ public class SonarQubeClient : IDisposable
         {
             _ruleCache[ruleKey] = null;
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 取得單一 Security Hotspot 的留言串，串接成一段文字。
+    /// /api/hotspots/search 不會回傳留言，要靠這支逐筆查詢的 /api/hotspots/show 才拿得到
+    /// （對應 sonar-cnes-report 的 AbstractSecurityHotspotsProvider 作法）。
+    /// 逐筆查詢會增加 API 呼叫次數，hotspot 數量大時執行時間會拉長。
+    /// </summary>
+    public async Task<string> GetHotspotCommentsAsync(string hotspotKey)
+    {
+        try
+        {
+            var url = $"api/hotspots/show?hotspot={Uri.EscapeDataString(hotspotKey)}";
+            var response = await _http.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+                return string.Empty;
+
+            var body = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.HotspotShowResponse);
+            if (result is null || result.Comment.Count == 0)
+                return string.Empty;
+
+            var parts = result.Comment
+                .Select(c => !string.IsNullOrEmpty(c.Markdown) ? c.Markdown : c.HtmlText)
+                .Where(t => !string.IsNullOrEmpty(t));
+
+            return string.Join(" | ", parts);
+        }
+        catch
+        {
+            return string.Empty;
         }
     }
 

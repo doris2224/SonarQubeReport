@@ -44,9 +44,18 @@ try
         Console.WriteLine($"  儀表板連結     : {config.BaseUrl.TrimEnd('/')}/dashboard?id={p}");
     Console.WriteLine();
 
-    Console.WriteLine("下載 Issues 資料中...");
-    var (allIssues, componentLanguages) = await client.SearchAllIssuesAsync(projects);
-    Console.WriteLine($"  取得 {allIssues.Count} 筆 issue");
+    // Issues / All 頁籤：resolved=false（尚未被標記解決的 issue）
+    Console.WriteLine("下載 Issues 資料中 (resolved=false)...");
+    var (issues, ruleLanguages) = await client.SearchIssuesAsync(projects, resolved: false);
+    Console.WriteLine($"  取得 {issues.Count} 筆 issue");
+
+    // Unconfirmed 頁籤：resolved=true（已被標記解決，如 wontfix / false-positive / fixed）
+    Console.WriteLine("下載 Unconfirmed 資料中 (resolved=true)...");
+    var (unconfirmed, unconfirmedRuleLanguages) = await client.SearchIssuesAsync(projects, resolved: true);
+    Console.WriteLine($"  取得 {unconfirmed.Count} 筆 issue");
+
+    foreach (var kv in unconfirmedRuleLanguages)
+        ruleLanguages[kv.Key] = kv.Value;
 
     Console.WriteLine("下載 Security Hotspots 資料中...");
     var hotspotRows = new List<HotspotRow>();
@@ -56,14 +65,15 @@ try
         foreach (var h in hotspots)
         {
             var ruleDetail = await client.GetRuleDetailAsync(h.RuleKey);
-            hotspotRows.Add(new HotspotRow(h, ruleDetail));
+            var comments = string.IsNullOrEmpty(h.Key) ? "" : await client.GetHotspotCommentsAsync(h.Key);
+            hotspotRows.Add(new HotspotRow(h, ruleDetail, comments));
         }
     }
     Console.WriteLine($"  取得 {hotspotRows.Count} 筆 security hotspot");
 
     Console.WriteLine();
     Console.WriteLine($"產出報表: {outputPath}");
-    ExcelReportBuilder.Build(outputPath, allIssues, componentLanguages, config.UnconfirmedStatuses, hotspotRows);
+    ExcelReportBuilder.Build(outputPath, issues, unconfirmed, ruleLanguages, hotspotRows);
 
     Console.WriteLine("完成。");
     return 0;

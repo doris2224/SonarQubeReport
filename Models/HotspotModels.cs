@@ -48,5 +48,23 @@ public class RuleDetail
     [JsonPropertyName("langName")] public string? LangName { get; set; }
 }
 
-/// <summary>Hotspot 加上其規則詳細資料（Severity / Language 來源），供 Excel 產表使用。</summary>
-public record HotspotRow(SonarHotspot Hotspot, RuleDetail? Rule);
+/// <summary>Hotspot 加上其規則詳細資料（Severity / Language 來源）與留言，供 Excel 產表使用。</summary>
+public record HotspotRow(SonarHotspot Hotspot, RuleDetail? Rule, string Comments);
+
+/// <summary>
+/// 對應 GET /api/hotspots/show?hotspot=&lt;key&gt; 回傳的 JSON 結構。
+/// /api/hotspots/search 本身不含留言串，要靠這支逐筆查詢的 API 才拿得到 "comment" 陣列
+/// （sonar-cnes-report 的 AbstractSecurityHotspotsProvider 就是這樣做的）。
+/// </summary>
+public class HotspotShowResponse
+{
+    [JsonPropertyName("comment")] public List<HotspotComment> Comment { get; set; } = new();
+}
+
+public class HotspotComment
+{
+    [JsonPropertyName("login")] public string? Login { get; set; }
+    [JsonPropertyName("htmlText")] public string? HtmlText { get; set; }
+    [JsonPropertyName("markdown")] public string? Markdown { get; set; }
+    [JsonPropertyName("createdAt")] public string? CreatedAt { get; set; }
+}
