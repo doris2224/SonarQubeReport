@@ -49,6 +49,29 @@ public class SonarQubeClient : IDisposable
     private static DateTimeOffset LatestPossibleDate => DateTimeOffset.UtcNow.AddDays(2);
 
     /// <summary>
+    /// 檢查 CE Task 的執行狀態
+    /// 對應 SonarQube API: /api/ce/task
+    /// </summary>
+    public async Task<CETaskStatus?> GetCETaskStatusAsync(string ceTaskId)
+    {
+        string sbody = "";
+        try
+        {
+            var url = $"api/ce/task?id={Uri.EscapeDataString(ceTaskId)}";
+            var body = await GetStringAsync(url);
+            sbody = body;
+            var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.CETaskResponse);
+            return result?.Task;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"取得 CE Task 狀態失敗: {ex.Message}");
+            Console.Error.WriteLine($"body: {sbody}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 抓取指定專案(可多個)、指定 resolved 狀態的 issue。
     ///
     /// 對應 sonar-cnes-report (AbstractIssuesProvider) 的作法：
@@ -184,7 +207,7 @@ public class SonarQubeClient : IDisposable
         int page, int pageSize)
     {
         var url = $"api/issues/search?componentKeys={Uri.EscapeDataString(componentKeys)}" +
-                   $"&resolved={(resolved ? "True" : "False")}&ps={pageSize}&p={page}&additionalFields=_all";
+                   $"&resolved={(resolved ? "true" : "false")}&ps={pageSize}&p={page}&additionalFields=_all";
 
         if (!string.IsNullOrEmpty(type))
             url += $"&types={Uri.EscapeDataString(type)}";
