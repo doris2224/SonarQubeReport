@@ -49,26 +49,6 @@ public class SonarQubeClient : IDisposable
     private static DateTimeOffset LatestPossibleDate => DateTimeOffset.UtcNow.AddDays(2);
 
     /// <summary>
-    /// 檢查 CE Task 的執行狀態
-    /// 對應 SonarQube API: /api/ce/task
-    /// </summary>
-    public async Task<CETaskStatus?> GetCETaskStatusAsync(string ceTaskId)
-    {
-        try
-        {
-            var url = $"api/ce/task?id={Uri.EscapeDataString(ceTaskId)}";
-            var body = await GetStringAsync(url);
-            var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.CETaskResponse);
-            return result?.Task;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"取得 CE Task 狀態失敗: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>
     /// 抓取指定專案(可多個)、指定 resolved 狀態的 issue。
     ///
     /// 對應 sonar-cnes-report (AbstractIssuesProvider) 的作法：
@@ -321,81 +301,6 @@ public class SonarQubeClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// 取得項目的 Measures（指標測量值）。
-    /// 
-    /// SonarQube 維護的常見指標包括：
-    /// - ncloc: 代碼行數
-    /// - complexity: 複雜度
-    /// - coverage: 代碼覆蓋率
-    /// - bugs: Bug 數量
-    /// - vulnerabilities: 漏洞數量
-    /// - code_smells: 代碼異味數量
-    /// - sqale_index: 技術債務
-    /// - duplicated_lines_density: 重複代碼密度
-    /// 
-    /// 對應 SonarQube API: /api/measures/component
-    /// 對應 sonar-cnes-report 的 MeasureProvider 邏輯
-    /// </summary>
-    public async Task<List<Measure>> GetMeasuresAsync(string projectKey)
-    {
-        try
-        {
-            // SonarQube 中 REPORTS_METRICS 常見的指標列表
-            // 對齊 sonar-cnes-report 的 requests.properties 中的 REPORTS_METRICS 定義
-            var metricsKeys = new[]
-            {
-                // 代碼行數
-                "ncloc",
-                
-                // 複雜度
-                "complexity",
-                "cognitive_complexity",
-                
-                // 覆蓋率
-                "coverage",
-                "line_coverage",
-                "branch_coverage",
-                
-                // 重複代碼
-                "duplicated_lines_density",
-                
-                // Issue 數量
-                "bugs",
-                "vulnerabilities",
-                "code_smells",
-                "violations",
-                
-                // 技術債務
-                "sqale_index",
-                "sqale_rating",
-                
-                // 安全等級
-                "security_rating",
-                "reliability_rating",
-                
-                // 品質 Gate
-                "alert_status"
-            };
-
-            var metricsParam = Uri.EscapeDataString(string.Join(",", metricsKeys));
-            var url = $"api/measures/component?component={Uri.EscapeDataString(projectKey)}&metricKeys={metricsParam}";
-            
-            var body = await GetStringAsync(url);
-            var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.MeasuresResponse);
-            
-            if (result?.Component?.Measures == null)
-                return new List<Measure>();
-
-            return result.Component.Measures;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"取得 Measures 失敗: {ex.Message}");
-            return new List<Measure>();
-        }
-    }
-
     private async Task<string> GetStringAsync(string relativeUrl)
     {
         var response = await _http.GetAsync(relativeUrl);
@@ -406,6 +311,67 @@ public class SonarQubeClient : IDisposable
                 $"呼叫 SonarQube API 失敗 ({(int)response.StatusCode} {response.StatusCode}): {relativeUrl}\n{errorBody}");
         }
         return await response.Content.ReadAsStringAsync();
+    }
+
+    /// <summary>
+    /// 獲取項目的組件樹（所有文件/目錄及其指標）
+    /// 對應 SonarQube API: /api/measures/component_tree
+    /// 用於生成 Metrics 工作表（組件矩陣表）
+    /// </summary>
+    public async Task<List<TreeComponent>> GetComponentTreeAsync(string projectKey)
+    {
+        try
+        {
+            // Metrics 工作表使用的指標列表
+            // 對齊 sonar-cnes-report 中的 SHEETS_METRICS 定義
+            var metricsKeys = new[]
+            {
+                "ncloc",                      // 代碼行數
+                "complexity",                 // 複雜度
+                "cognitive_complexity",       // 認知複雜度
+                "coverage",                   // 覆蓋率
+                "duplicated_lines_density",   // 重複代碼密度
+                "comment_lines_density"       // 註釋密度
+            };
+
+            var metricsParam = Uri.EscapeDataString(string.Join(",", metricsKeys));
+            var components = new List<TreeComponent>();
+
+            // 分頁獲取所有組件
+            int page = 1;
+            const int pageSize = 500;
+
+            while (true)
+            {
+                var url = $"api/measures/component_tree?" +
+                          $"component={Uri.EscapeDataString(projectKey)}" +
+                          $"&metricKeys={metricsParam}" +
+                          $"&p={page}&ps={pageSize}";
+
+                var body = await GetStringAsync(url);
+                var result = JsonSerializer.Deserialize(body, 
+                    AppJsonContext.Default.ComponentTreeResponse);
+
+                if (result?.Components == null || result.Components.Count == 0)
+                    break;
+
+                components.AddRange(result.Components);
+
+                // 檢查是否還有下一頁
+                if (result.Paging == null || 
+                    page * pageSize >= result.Paging.Total)
+                    break;
+
+                page++;
+            }
+
+            return components;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"取得 ComponentTree 失敗: {ex.Message}");
+            return new List<TreeComponent>();
+        }
     }
 
     public void Dispose() => _http.Dispose();

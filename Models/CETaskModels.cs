@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SonarQubeReport.Models;
@@ -5,6 +6,7 @@ namespace SonarQubeReport.Models;
 /// <summary>
 /// CE Task 相關的數據模型
 /// 對應 SonarQube API: /api/ce/task
+/// 注意：時間戳字段可能是毫秒數字或 ISO 8601 格式字符串，使用 object 類型以支持兩種格式
 /// </summary>
 
 /// <summary>
@@ -18,6 +20,7 @@ public class CETaskResponse
 
 /// <summary>
 /// CE Task 狀態信息
+/// 注：此模型使用寬鬆的類型定義（如 object），以支持 SonarQube 不同版本的 API 響應格式
 /// </summary>
 public class CETaskStatus
 {
@@ -45,16 +48,17 @@ public class CETaskStatus
     public string? Type { get; set; }
 
     /// <summary>
-    /// 完成時間戳記（毫秒）
+    /// 完成時間戳記（毫秒或 ISO 8601 字符串）
+    /// 使用 object 類型以支持多種格式
     /// </summary>
     [JsonPropertyName("executedAt")]
-    public string? ExecutedAt { get; set; }
+    public object? ExecutedAt { get; set; }
 
     /// <summary>
-    /// 執行時間（毫秒）
+    /// 執行時間（毫秒或字符串）
     /// </summary>
     [JsonPropertyName("executionTimeMs")]
-    public long? ExecutionTimeMs { get; set; }
+    public object? ExecutionTimeMs { get; set; }
 
     /// <summary>
     /// 錯誤信息（當狀態為 FAILED 時）
@@ -87,10 +91,11 @@ public class CETaskStatus
     public string? ComponentKey { get; set; }
 
     /// <summary>
-    /// 開始時間戳記（毫秒）
+    /// 開始時間戳記（毫秒或 ISO 8601 字符串）
+    /// 使用 object 類型以支持多種格式
     /// </summary>
     [JsonPropertyName("startedAt")]
-    public string? StartedAt { get; set; }
+    public object? StartedAt { get; set; }
 
     /// <summary>
     /// 警告信息
@@ -103,6 +108,12 @@ public class CETaskStatus
     /// </summary>
     [JsonPropertyName("qualityGate")]
     public QualityGate? QualityGate { get; set; }
+
+    /// <summary>
+    /// 其他可能的字段（容錯機制）
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalData { get; set; }
 }
 
 /// <summary>
@@ -151,4 +162,10 @@ public class QualityGateCondition
 
     [JsonPropertyName("periodIndex")]
     public int? PeriodIndex { get; set; }
+
+    /// <summary>
+    /// 其他可能的字段（容錯機制）
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalData { get; set; }
 }

@@ -5,9 +5,8 @@ using SonarQubeReport.Models;
 namespace SonarQubeReport.Services;
 
 /// <summary>
-/// 依照 sonar-cnes-report-5.0.4.jar 的頁籤配置，把抓回來的資料寫成 .xlsx：
-/// All (完整原始欄位，resolved=false) / Issues (resolved=false) / Unconfirmed (resolved=true) / 
-/// Security Hotspots / Metrics。
+/// 依照 SonarQubeReportExample.xlsx 的頁籤配置，把抓回來的資料寫成 .xlsx：
+/// All (完整原始欄位，resolved=false) / Issues (resolved=false) / Unconfirmed (resolved=true) / Security Hotspots。
 /// 欄位與分頁邏輯已對齊 sonar-cnes-report-5.0.4.jar 的實際輸出。
 /// </summary>
 public static class ExcelReportBuilder
@@ -67,11 +66,11 @@ public static class ExcelReportBuilder
         List<SonarIssue> unconfirmedIssues,
         Dictionary<string, string> ruleLanguages,
         List<HotspotRow> hotspots,
-        List<Measure>? measures = null)
+        List<TreeComponent>? components = null)
     {
         using var workbook = new XLWorkbook();
 
-        // 頁籤順序依照需求：All、Issues、Unconfirmed、Security Hotspots、Metrics
+        // 頁籤順序依照需求：All、Issues、Unconfirmed、Security Hotspots
         // 「All」跟「Issues」用同一份資料（resolved=false），只是欄位不同——
         // 這對齊 sonar-cnes-report 的行為：它的「All」頁籤也是 resolved=false 查詢的原始 JSON，
         // 不是 Issues + Unconfirmed 的聯集。
@@ -80,10 +79,10 @@ public static class ExcelReportBuilder
         BuildIssueSheet(workbook.Worksheets.Add("Unconfirmed"), unconfirmedIssues, ruleLanguages);
         BuildHotspotSheet(workbook.Worksheets.Add("Security Hotspots"), hotspots);
         
-        // 新增 Metrics 頁籤
-        if (measures != null && measures.Count > 0)
+        // 【新增】生成 Metrics 頁籤
+        if (components != null && components.Count > 0)
         {
-            BuildMetricsSheet(workbook.Worksheets.Add("Metrics"), measures);
+            BuildMetricsSheet(workbook.Worksheets.Add("Metrics"), components);
         }
 
         var dir = Path.GetDirectoryName(outputPath);
@@ -199,130 +198,60 @@ public static class ExcelReportBuilder
         FinalizeSheet(ws, HotspotHeaders.Length);
     }
 
-    private static void BuildMetricsSheet(IXLWorksheet ws, List<Measure> measures)
+    private static void BuildMetricsSheet(IXLWorksheet ws, List<TreeComponent> components)
     {
-        // Metrics 頁籤頭：Metric Name 和 Value
-        string[] headers = { "Metric Name", "Value" };
-        WriteHeader(ws, headers);
+        if (components.Count == 0)
+            return;
 
-        int row = 2;
-        foreach (var measure in measures)
+        // 【重要】按照 sonar-cnes-report 的格式：
+        // Path、coverage、complexity、duplicated_lines_density、cognitive_complexity、ncloc、ID、comment_lines_density、Name
+        // 这个列顺序是 sonar-cnes-report 的标准格式
+
+        // 首先获取所有可能的指标 Key（从所有组件中提取）
+        var metricKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var component in components)
         {
-            if (string.IsNullOrEmpty(measure.Metric))
-                continue;
+            if (component.Measures != null)
+            {
+                foreach (var measure in component.Measures)
+                {
+                    if (!string.IsNullOrEmpty(measure.Metric))
+                        metricKeys.Add(measure.Metric);
+                }
+            }
+        }
+
+        // 构造列头：按照标准顺序
+        var headers = new List<string> { "Path", "coverage", "complexity", "duplicated_lines_density", "cognitive_complexity", "ncloc", "ID", "comment_lines_density", "Name" };
+        
+        // 添加其他任何在数据中出现但不在标准列表中的指标
+        foreach (var key in metricKeys)
+        {
+            if (!headers.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                headers.Add(key);
+            }
+        }
+
+        WriteHeader(ws, headers.ToArray());
+
+        // 写入数据行
+        int row = 2;
+        foreach (var component in components)
+        {
+            var map = component.ToMap();
 
             int col = 1;
-            // 將指標 Key 轉換為人類可讀的名稱
-            SetCell(ws, row, col++, GetMetricDisplayName(measure.Metric));
-            // 指標值
-            SetCell(ws, row, col++, measure.Value ?? "");
+            foreach (var header in headers)
+            {
+                var value = map.TryGetValue(header, out var v) ? v : "";
+                SetCell(ws, row, col++, value ?? "");
+            }
 
             row++;
         }
 
-        // 設置表格格式
-        var table = ws.Range(1, 1, row - 1, 2).CreateTable("metrics");
-        table.ShowAutoFilter = true;
-        table.Theme = XLTableTheme.TableStyleMedium2;
-
-        // 調整列寬
-        ws.Column(1).Width = 35;
-        ws.Column(2).Width = 20;
-    }
-
-    /// <summary>
-    /// 將 SonarQube 指標 Key 轉換為人類可讀的顯示名稱
-    /// 對齊 sonar-cnes-report 的 StringManager 邏輯
-    /// </summary>
-    private static string GetMetricDisplayName(string metricKey)
-    {
-        return metricKey switch
-        {
-            // 代碼行數相關
-            "ncloc" => "Lines of Code",
-            "lines" => "Lines",
-            "comment_lines" => "Comment Lines",
-            "comment_lines_density" => "Comment Lines Density",
-
-            // 複雜度相關
-            "complexity" => "Complexity",
-            "cognitive_complexity" => "Cognitive Complexity",
-            "file_complexity" => "File Complexity",
-            "function_complexity" => "Function Complexity",
-            "class_complexity" => "Class Complexity",
-
-            // 覆蓋率相關
-            "coverage" => "Coverage",
-            "line_coverage" => "Line Coverage",
-            "branch_coverage" => "Branch Coverage",
-            "conditions_coverage" => "Conditions Coverage",
-
-            // 重複代碼
-            "duplicated_lines" => "Duplicated Lines",
-            "duplicated_lines_density" => "Duplicated Lines Density",
-            "duplicated_blocks" => "Duplicated Blocks",
-            "duplicated_files" => "Duplicated Files",
-
-            // 問題/缺陷相關
-            "bugs" => "Bugs",
-            "vulnerabilities" => "Vulnerabilities",
-            "code_smells" => "Code Smells",
-            "security_hotspots" => "Security Hotspots",
-            "violations" => "Violations",
-            "blocker_violations" => "Blocker Violations",
-            "critical_violations" => "Critical Violations",
-            "major_violations" => "Major Violations",
-            "minor_violations" => "Minor Violations",
-            "info_violations" => "Info Violations",
-
-            // 測試相關
-            "tests" => "Tests",
-            "test_success_density" => "Test Success Density",
-            "test_execution_time" => "Test Execution Time",
-            "test_failures" => "Test Failures",
-            "test_errors" => "Test Errors",
-            "test_skipped" => "Test Skipped",
-
-            // 技術債務
-            "sqale_index" => "Technical Debt",
-            "sqale_rating" => "Maintainability Rating",
-            "sqale_debt_ratio" => "Technical Debt Ratio",
-
-            // 品質指標
-            "alert_status" => "Quality Gate Status",
-            "quality_gate_details" => "Quality Gate Details",
-
-            // 安全相關
-            "security_rating" => "Security Rating",
-            "reliability_rating" => "Reliability Rating",
-            "maintainability_rating" => "Maintainability Rating",
-
-            // 新代碼相關
-            "new_lines" => "New Lines",
-            "new_code_smells" => "New Code Smells",
-            "new_bugs" => "New Bugs",
-            "new_vulnerabilities" => "New Vulnerabilities",
-            "new_coverage" => "New Coverage",
-            "new_line_coverage" => "New Line Coverage",
-            "new_branch_coverage" => "New Branch Coverage",
-            "new_duplicated_lines" => "New Duplicated Lines",
-            "new_violations" => "New Violations",
-
-            // 預設值：將 snake_case 轉換為標題格式
-            _ => CamelCaseToTitle(metricKey)
-        };
-    }
-
-    /// <summary>
-    /// 將 snake_case 轉換為標題格式
-    /// 例如: "test_metric" => "Test Metric"
-    /// </summary>
-    private static string CamelCaseToTitle(string input)
-    {
-        if (string.IsNullOrEmpty(input)) return "";
-        
-        var words = input.Split('_', '-');
-        return string.Join(" ", words.Select(w => char.ToUpper(w[0]) + (w.Length > 1 ? w[1..].ToLower() : "")));
+        FinalizeSheet(ws, headers.Count);
     }
 
     private static void WriteHeader(IXLWorksheet ws, string[] headers)
