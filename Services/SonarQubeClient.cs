@@ -54,19 +54,16 @@ public class SonarQubeClient : IDisposable
     /// </summary>
     public async Task<CETaskStatus?> GetCETaskStatusAsync(string ceTaskId)
     {
-        string sbody = "";
         try
         {
             var url = $"api/ce/task?id={Uri.EscapeDataString(ceTaskId)}";
             var body = await GetStringAsync(url);
-            sbody = body;
             var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.CETaskResponse);
             return result?.Task;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"取得 CE Task 狀態失敗: {ex.Message}");
-            Console.Error.WriteLine($"body: {sbody}");
             return null;
         }
     }
@@ -321,6 +318,81 @@ public class SonarQubeClient : IDisposable
         catch
         {
             return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// 取得項目的 Measures（指標測量值）。
+    /// 
+    /// SonarQube 維護的常見指標包括：
+    /// - ncloc: 代碼行數
+    /// - complexity: 複雜度
+    /// - coverage: 代碼覆蓋率
+    /// - bugs: Bug 數量
+    /// - vulnerabilities: 漏洞數量
+    /// - code_smells: 代碼異味數量
+    /// - sqale_index: 技術債務
+    /// - duplicated_lines_density: 重複代碼密度
+    /// 
+    /// 對應 SonarQube API: /api/measures/component
+    /// 對應 sonar-cnes-report 的 MeasureProvider 邏輯
+    /// </summary>
+    public async Task<List<Measure>> GetMeasuresAsync(string projectKey)
+    {
+        try
+        {
+            // SonarQube 中 REPORTS_METRICS 常見的指標列表
+            // 對齊 sonar-cnes-report 的 requests.properties 中的 REPORTS_METRICS 定義
+            var metricsKeys = new[]
+            {
+                // 代碼行數
+                "ncloc",
+                
+                // 複雜度
+                "complexity",
+                "cognitive_complexity",
+                
+                // 覆蓋率
+                "coverage",
+                "line_coverage",
+                "branch_coverage",
+                
+                // 重複代碼
+                "duplicated_lines_density",
+                
+                // Issue 數量
+                "bugs",
+                "vulnerabilities",
+                "code_smells",
+                "violations",
+                
+                // 技術債務
+                "sqale_index",
+                "sqale_rating",
+                
+                // 安全等級
+                "security_rating",
+                "reliability_rating",
+                
+                // 品質 Gate
+                "alert_status"
+            };
+
+            var metricsParam = Uri.EscapeDataString(string.Join(",", metricsKeys));
+            var url = $"api/measures/component?component={Uri.EscapeDataString(projectKey)}&metricKeys={metricsParam}";
+            
+            var body = await GetStringAsync(url);
+            var result = JsonSerializer.Deserialize(body, AppJsonContext.Default.MeasuresResponse);
+            
+            if (result?.Component?.Measures == null)
+                return new List<Measure>();
+
+            return result.Component.Measures;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"取得 Measures 失敗: {ex.Message}");
+            return new List<Measure>();
         }
     }
 

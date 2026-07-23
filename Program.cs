@@ -1,7 +1,6 @@
 using SonarQubeReport;
 using SonarQubeReport.Models;
 using SonarQubeReport.Services;
-using System.Text;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
@@ -27,10 +26,6 @@ string projectsArg = args[1];
 string reportPathArg = args[2];
 string? ceTaskId = args.Length > 3 ? args[3] : null;
 
-//string logpath = args.Length > 4 ? args[4] : null;
-
-//FileInfo fileinfo = new FileInfo(logpath);
-
 var configPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
 var config = AppConfig.Load(configPath);
 
@@ -49,10 +44,10 @@ try
 {
     using var client = new SonarQubeClient(config.BaseUrl, token, config.PageSize);
 
-    Console.WriteLine($"SonarQube Server  : {config.BaseUrl}");
-    Console.WriteLine($"SonarQube Job        : {string.Join(", ", projects)}");
+    Console.WriteLine($"連線 SonarQube  : {config.BaseUrl}");
+    Console.WriteLine($"目標專案        : {string.Join(", ", projects)}");
     foreach (var p in projects)
-        Console.WriteLine($"  SonarQube Url     : {config.BaseUrl.TrimEnd('/')}/dashboard?id={p}");
+        Console.WriteLine($"  儀表板連結     : {config.BaseUrl.TrimEnd('/')}/dashboard?id={p}");
     Console.WriteLine();
 
     // 如果提供了 CE Task ID，先進行驗證
@@ -98,9 +93,19 @@ try
     }
     Console.WriteLine($"  取得 {hotspotRows.Count} 筆 security hotspot");
 
+    // Metrics 頁籤：獲取項目的指標測量值（新增功能，對齊 sonar-cnes-report）
+    Console.WriteLine("下載 Metrics 資料中...");
+    var allMeasures = new List<Measure>();
+    foreach (var project in projects)
+    {
+        var measures = await client.GetMeasuresAsync(project);
+        allMeasures.AddRange(measures);
+    }
+    Console.WriteLine($"  取得 {allMeasures.Count} 個 metrics");
+
     Console.WriteLine();
     Console.WriteLine($"產出報表: {outputPath}");
-    ExcelReportBuilder.Build(outputPath, issues, unconfirmed, ruleLanguages, hotspotRows);
+    ExcelReportBuilder.Build(outputPath, issues, unconfirmed, ruleLanguages, hotspotRows, allMeasures);
 
     Console.WriteLine("完成。");
     return 0;
@@ -198,25 +203,3 @@ static string ResolveOutputPath(string reportPathArg, string[] projects)
     string fileName = $"{string.Join("_", projects)}_SonarQubeReport_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
     return Path.Combine(reportPathArg, fileName);
 }
-
-/// <summary>
-/// 產生Log檔
-/// </summary>
-/// <param name="msg">檔案內容</param>
-/// <param name="fileinfo"></param>
-//static void WriteInLog(string msg, FileInfo fileinfo)
-//{
-//    if (!Directory.Exists(fileinfo.DirectoryName))
-//    {
-//        //Log檔案目錄不存在時，創建路徑
-//        Directory.CreateDirectory(fileinfo.DirectoryName);
-//    }
-//    using (FileStream fs = fileinfo.OpenWrite())
-//    {
-//        StreamWriter sw = new StreamWriter(fs, Encoding.UTF8);
-//        sw.BaseStream.Seek(0, SeekOrigin.End);
-//        sw.Write(msg);
-//        sw.Flush();
-//        sw.Close();
-//    }
-//}

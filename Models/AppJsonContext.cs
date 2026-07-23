@@ -17,6 +17,11 @@ namespace SonarQubeReport.Models;
 [JsonSerializable(typeof(CETaskStatus))]
 [JsonSerializable(typeof(QualityGate))]
 [JsonSerializable(typeof(QualityGateCondition))]
+[JsonSerializable(typeof(MeasuresResponse))]
+[JsonSerializable(typeof(MeasureComponent))]
+[JsonSerializable(typeof(Measure))]
+[JsonSerializable(typeof(MeasurePeriod))]
+[JsonSerializable(typeof(MetricsRow))]
 public partial class AppJsonContext : JsonSerializerContext
 {
 }
